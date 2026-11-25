@@ -61,7 +61,7 @@ img.p{max-width:100%;border-radius:12px;margin-top:8px}
 .hb{height:10px;border-radius:5px;background:linear-gradient(90deg,#1fb8ff,var(--pri));margin:3px 0 8px}
 </style></head><body>
 <header>
-<h1><span>💧 ส่งน้ำดื่ม Plant 3</span><span><input type="date" id="dt" style="width:auto;min-height:44px;padding:6px 10px;font-size:15px" onchange="chd(this.value)"> <button class="sm" id="sg" onclick="gate(setUI)">⚙</button></span></h1>
+<h1><span>💧 ส่งน้ำดื่ม Plant 3 <i id="syn" onclick="wdInfo()" title="ยังไม่เชื่อมต่อระบบกลาง" style="display:inline-block;width:14px;height:14px;border-radius:50%;background:#7fa3bf;margin-left:8px;vertical-align:middle;cursor:pointer;border:2px solid rgba(255,255,255,.25)"></i></span><span><input type="date" id="dt" style="width:auto;min-height:44px;padding:6px 10px;font-size:15px" onchange="chd(this.value)"> <button class="sm" id="sg" onclick="gate(setUI)">⚙</button></span></h1>
 <div class="bar"><i id="pg"></i></div>
 <div class="sub" id="sub"></div>
 <div class="tabs" id="tabs"></div>
@@ -78,7 +78,7 @@ window.SEED={"points": [{"id": "p1", "n": "ป้อมหน้า รปภ.",
 var M={},L=[],dbp=new Promise(function(res){try{var r=indexedDB.open('waterdeliv',1);r.onupgradeneeded=function(){r.result.createObjectStore('kv')};r.onsuccess=function(){var d=r.result,tx=d.transaction('kv'),c=tx.objectStore('kv').openCursor();c.onsuccess=function(){var k=c.result;if(k){M[k.key]=k.value;k.continue()}};tx.oncomplete=function(){Object.keys(M).forEach(function(k){if(k.indexOf('tst/')==0){delete M[k];d.transaction('kv','readwrite').objectStore('kv').delete(k)}});if(window.SEED&&M['config/points']===undefined){M['config/points']={list:SEED.points};for(var k in SEED.imgs)M['pointimgs/'+k]={img:SEED.imgs[k]};var st=d.transaction('kv','readwrite').objectStore('kv');for(var q in M)st.put(M[q],q)}res(d)}};r.onerror=function(){res(null)}}catch(e){res(null)}});
 try{navigator.storage.persist()}catch(e){}
 var TESTPFX='tst/';function P(p){return window.TEST&&p.indexOf('days')==0?TESTPFX+p:p}
-function put(p,v){dbp.then(function(d){if(!d)return;var s=d.transaction('kv','readwrite').objectStore('kv');v===undefined?s.delete(p):s.put(v,p)})}
+function rawput(p,v){dbp.then(function(d){if(!d)return;var s=d.transaction('kv','readwrite').objectStore('kv');v===undefined?s.delete(p):s.put(v,p)})}function put(p,v){mark(p);rawput(p,v)}
 function snap(p){var v=M[p];return{id:p.split('/').pop(),exists:v!==undefined,data:function(){return v}}}
 function kids(p){var n=p.split('/').length+1;return Object.keys(M).filter(function(k){return k.indexOf(p+'/')==0&&k.split('/').length==n})}
 function qs(p,q){var d=kids(p).map(snap);if(q.o)d.sort(function(a,b){var x=a.data()[q.o],y=b.data()[q.o];return(x<y?-1:x>y?1:0)*(q.dir=='desc'?-1:1)});if(q.n)d=d.slice(0,q.n);return{docs:d,size:d.length}}
@@ -95,6 +95,33 @@ window.bkp=function(){var o={};for(var k in M)if(k.indexOf('tst/')!=0)o[k]=M[k];
 window.bulk=function(o){for(var k in o){var q=P(k);M[q]=o[k];put(q,o[k])}fire()};
 window.testMode=function(){if(window.TEST){ask('ปิดโหมดทดสอบ และลบข้อมูลที่กรอกตอนทดสอบทั้งหมด?',function(){Object.keys(M).forEach(function(k){if(k.indexOf('tst/')==0){delete M[k];put(k)}});window.TEST=false;fire();tell('ปิดโหมดทดสอบและล้างข้อมูลทดสอบแล้ว')})}else{window.TEST=true;fire();tell('เปิดโหมดทดสอบแล้ว: เลือกวันที่ใดก็ได้เพื่อกรอก ข้อมูลจะไม่ปนกับข้อมูลจริง')}};
 window.rst=function(){var i=document.createElement('input');i.type='file';i.accept='.json';i.onchange=function(){var r=new FileReader();r.onload=function(){try{var o=JSON.parse(r.result);ask('กู้คืนจะเขียนทับข้อมูลที่ชื่อเหมือนกัน ดำเนินการต่อ?',function(){for(var k in o){M[k]=o[k];put(k,o[k])}fire();tell('กู้คืนแล้ว')})}catch(e){tell('ไฟล์ไม่ถูกต้อง')}};r.readAsText(i.files[0])};i.click()};
+/* ===== SYNC กับฐานกลาง (Supabase) ===== */
+var SB='https://hvbyqxspwcdecriixyma.supabase.co',SK='sb_publishable_tQls8vxUiE3T_wSUgPHJtg_TzY0K3PL',IVL=20000,PAGE=500;
+var mem={};
+function ls(k,v){try{if(v===undefined)return localStorage.getItem(k);if(v===null)localStorage.removeItem(k);else localStorage.setItem(k,v)}catch(e){if(v===undefined)return mem[k]===undefined?null:mem[k];if(v===null)delete mem[k];else mem[k]=v}return null}
+var pw=ls('wd_pw'),since=ls('wd_since')||'',dirty={},dseq=0,st='off',lastOk=null,busy=false,ft=null,tm=null;
+try{dirty=JSON.parse(ls('wd_dirty')||'{}')}catch(e){dirty={}}
+for(var dk in dirty)if(dirty[dk]>dseq)dseq=dirty[dk];
+function saveDirty(){ls('wd_dirty',JSON.stringify(dirty))}
+function mark(p){if(p.indexOf('tst/')==0)return;dseq++;dirty[p]=dseq;saveDirty();sched()}
+function sched(){if(!pw)return;clearTimeout(ft);ft=setTimeout(tick,500)}
+function sj(v){if(v===null||typeof v!='object')return JSON.stringify(v);if(Array.isArray(v))return '['+v.map(sj).join(',')+']';return '{'+Object.keys(v).sort().map(function(k){return JSON.stringify(k)+':'+sj(v[k])}).join(',')+'}'}
+function rpc(fn,body){return fetch(SB+'/rest/v1/rpc/'+fn,{method:'POST',headers:{'apikey':SK,'Content-Type':'application/json'},body:JSON.stringify(body)}).then(function(r){return r.text().then(function(t){if(!r.ok){var e=new Error(t||('HTTP '+r.status));e.bad=/bad password/.test(t);throw e}return t?JSON.parse(t):null})})}
+var SC={ok:'#34f0a8',sync:'#ffb547',pend:'#ffb547',err:'#ff5d7a',off:'#7fa3bf'},ST={ok:'ซิงค์แล้ว',sync:'กำลังซิงค์…',pend:'รอส่งข้อมูลขึ้นระบบ',err:'เชื่อมต่อไม่ได้ (เก็บข้อมูลในเครื่องไว้ก่อน จะส่งใหม่อัตโนมัติ)',off:'ยังไม่เชื่อมต่อระบบกลาง'};
+function setSt(s){st=s;var e=document.getElementById('syn');if(e){e.style.background=SC[s];e.title=ST[s]}}
+async function flush(){var ks=Object.keys(dirty);for(var i=0;i<ks.length;i++){var p=ks[i],sq=dirty[p],v=M[p];if(v===undefined)await rpc('kv_del',{pw:pw,p:p});else await rpc('kv_set',{pw:pw,p:p,v:v});if(dirty[p]===sq){delete dirty[p];saveDirty()}}}
+async function pull(seen){var ch=false;for(var n=0;n<200;n++){var rows=await rpc('kv_pull',{pw:pw,since:since||'epoch'})||[],mx=since;rows.forEach(function(r){if(r.updated_at>mx)mx=r.updated_at;if(seen)seen[r.path]=1;if(r.path.indexOf('tst/')==0||dirty[r.path]!==undefined)return;if(r.deleted){if(M[r.path]!==undefined){delete M[r.path];rawput(r.path);ch=true}}else if(M[r.path]===undefined||sj(M[r.path])!==sj(r.value)){M[r.path]=r.value;rawput(r.path,r.value);ch=true}});var same=(mx===since);since=mx;ls('wd_since',since);if(rows.length<PAGE||same)break}if(ch)fire()}
+async function tick(){if(busy||!pw)return;busy=true;setSt('sync');try{await flush();var first=!ls('wd_init'),seen=first?{}:null;await pull(seen);if(first){Object.keys(M).forEach(function(k){if(k.indexOf('tst/')!=0&&!seen[k]){dseq++;dirty[k]=dseq}});saveDirty();await flush();ls('wd_init','1')}lastOk=new Date();setSt(Object.keys(dirty).length?'pend':'ok')}catch(e){if(e&&e.bad){pw=null;ls('wd_pw',null);setSt('off');window.wdAsk('รหัสผ่านไม่ถูกต้อง หรือถูกเปลี่ยนแล้ว กรุณาใส่ใหม่')}else setSt('err')}busy=false;if(pw&&st!='err'&&Object.keys(dirty).length)sched()}
+function loop(){clearInterval(tm);tm=setInterval(function(){if(!document.hidden)tick()},IVL)}
+function ov(h){var o=document.getElementById('wdov');if(!o){o=document.createElement('div');o.id='wdov';o.style.cssText='position:fixed;left:0;top:0;right:0;bottom:0;z-index:99;background:rgba(0,0,0,.72);display:flex;align-items:center;justify-content:center;padding:18px';document.body.appendChild(o)}o.innerHTML='<div style="background:#0b1f33;border:1px solid #1b4260;border-radius:14px;padding:18px;max-width:420px;width:100%;color:#e6f4ff">'+h+'</div>';o.style.display='flex'}
+window.wdClose=function(){var o=document.getElementById('wdov');if(o)o.style.display='none'};
+window.wdAsk=function(msg){ov('<h2 style="margin:0 0 6px;font:600 20px Kanit,sans-serif">🔑 รหัสผ่านร่วม</h2><div style="color:#7fa3bf;font-size:15px">ใส่รหัสผ่านร่วมเพื่อใช้ข้อมูลชุดเดียวกับทุกคน</div><input id="wdp" type="password" autocomplete="off" autocapitalize="off" style="margin-top:12px"><div class="er" id="wde">'+(msg||'')+'</div><div class="row"><button class="gh" onclick="wdClose()">ใช้ออฟไลน์ก่อน</button><button class="b0" onclick="wdGo()">เชื่อมต่อ</button></div>')};
+window.wdGo=async function(){var i=document.getElementById('wdp'),e=document.getElementById('wde'),v=i?i.value.trim():'';if(!v){e.textContent='กรุณาใส่รหัสผ่าน';return}e.textContent='กำลังตรวจสอบ…';try{await rpc('kv_pull',{pw:v,since:'2999-01-01T00:00:00Z'})}catch(x){e.textContent=x&&x.bad?'รหัสผ่านไม่ถูกต้อง':'เชื่อมต่อไม่ได้ ตรวจสัญญาณอินเทอร์เน็ตแล้วลองใหม่';return}pw=v;ls('wd_pw',v);window.wdClose();loop();tick()};
+window.wdSync=function(){tick()};
+window.wdInfo=function(){if(!pw){window.wdAsk();return}var n=Object.keys(dirty).length;ov('<h2 style="margin:0 0 8px;font:600 20px Kanit,sans-serif">🔄 สถานะซิงค์</h2><div style="font-size:16px;line-height:1.8">สถานะ: <b>'+ST[st]+'</b><br>รอส่งขึ้นระบบ: '+n+' รายการ<br>ซิงค์ล่าสุด: '+(lastOk?lastOk.toLocaleTimeString('th-TH'):'-')+'</div><div class="row"><button class="gh" onclick="wdAsk()">เปลี่ยนรหัสผ่าน</button><button class="b0" onclick="wdSync();wdClose()">ซิงค์ตอนนี้</button></div><div class="row"><button class="gh" onclick="wdClose()">ปิด</button></div>')};
+window.addEventListener('online',function(){tick()});
+document.addEventListener('visibilitychange',function(){if(!document.hidden)tick()});
+dbp.then(function(){setSt(pw?'sync':'off');if(pw){loop();tick()}else window.wdAsk()});
 })();
 </script>
 <script>
